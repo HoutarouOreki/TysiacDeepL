@@ -1,30 +1,48 @@
 import functools
 import random
+from typing import NamedTuple, Tuple, Any, Dict
+
 import numpy as np
 
-from pettingzoo import ParallelEnv
+from pettingzoo import AECEnv
 from gymnasium import spaces
+from pettingzoo.utils import agent_selector
 
 
-class TysiacGameEnv(ParallelEnv):
+class Card(NamedTuple):
+    value: str
+    suit: str
+
+
+class TysiacGameEnv(AECEnv):
     metadata = {
         "name": "tysiac_game_env_v0",
     }
 
     def __init__(self):
-        self.widow_cards: list[str] = []
-        self.a_cards: list[str] = []
-        self.b_cards: list[str] = []
-        self.c_cards: list[str] = []
+        super().__init__()
+        self.observations = None
+        self._agent_selector = None
+        self.widow_cards: list[Card] = []
+        self.a_cards: list[Card] = []
+        self.b_cards: list[Card] = []
+        self.c_cards: list[Card] = []
         self.a_points = 0
         self.b_points = 0
         self.c_points = 0
-        self.laid_cards: list[str] = []
-        self.current_turn_cards: list[tuple[str, str]] = []
+        self.laid_cards: list[Card] = []
+        self.current_turn_cards: list[tuple[str, Card]] = []
         self.possible_agents = ["a", "b", "c"]
 
     def reset(self, seed=None, options=None):
         self.agents = self.possible_agents.copy()
+        self._agent_selector = agent_selector(self.agents)
+        self.agent_selection = self._agent_selector.next()
+        self.observations = {agent: None for agent in self.agents}
+        self._cumulative_rewards = {agent: 0 for agent in self.agents}
+        self.terminations = {agent: False for agent in self.agents}
+        self.truncations = {agent: False for agent in self.agents}
+        self.infos = {agent: {} for agent in self.agents}
 
         self.a_cards = []
         self.b_cards = []
@@ -52,26 +70,64 @@ class TysiacGameEnv(ParallelEnv):
 
         self.widow_cards = [deck[x] for x in picked_cards if x is False]
 
-    def step(self, actions):
-        a_action = actions["a"]
-        b_action = actions["b"]
-        c_action = actions["c"]
+    def step(self, action) -> tuple[Any, dict[Any, float], dict[Any, bool], dict[Any, bool], dict[Any, dict[str, Any]]]:
+        if self.terminations[self.agent_selection] or self.truncations[self.agent_selection]:
+            # handles stepping an agent which is already dead
+            # accepts a None action for the one agent, and moves the agent_selection to
+            # the next dead agent,  or if there are no more dead agents, to the next live agent
+            self._was_dead_step(action)
+            return self.observations, self.rewards, self.terminations, self.truncations, self.infos
 
-        if a_action:
-            self.laid_cards.append(self.a_cards.pop(a_action))
+        agent = self.agent_selection
 
-        if b_action:
-            self.laid_cards.append(self.b_cards.pop(b_action))
+        if agent == "a":
+            self.laid_cards.append(self.a_cards.pop(action))
 
-        if c_action:
-            self.laid_cards.append(self.c_cards.pop(c_action))
+        if agent == "b":
+            self.laid_cards.append(self.b_cards.pop(action))
+
+        if agent == "c":
+            self.laid_cards.append(self.c_cards.pop(action))
+
+        self.rewards = self._get_empty_actors_dict(0)
 
         if len(self.current_turn_cards) == len(self.agents):
             winner = self._get_winner_for_current_turn()
+            self.rewards[winner] = self._get_current_turn_points()
             winner_index = self.agents.index(winner)
             for _ in range(winner_index):
                 agent = self.agents.pop(0)
                 self.agents.append(agent)
+
+        next_action_mask = np.zeros(7, dtype=np.int8)
+        for i in range(len(self.a_cards) - 1):
+            next_action_mask[i] = 1
+
+        self.observations = self._get_empty_actors_dict({})
+        self.observations["a"] = {
+            "a_cards": self.a_cards,
+            "laid_cards": self.laid_cards
+        }
+        self.observations["b"] = {
+            "b_cards": self.b_cards,
+            "laid_cards": self.laid_cards
+        }
+        self.observations["c"] = {
+            "c_cards": self.c_cards,
+            "laid_cards": self.laid_cards
+        }
+
+        self.terminations = self._get_empty_actors_dict(len(self.a_cards) == 0)
+        self.truncations = self._get_empty_actors_dict(False)
+        self.infos: dict = self._get_empty_actors_dict({})
+        self.infos[agent]["action_mask"] = next_action_mask
+
+        self.agent_selection = self._agent_selector.next()
+
+        return self.observations, self.rewards, self.terminations, self.truncations, self.infos
+
+    def _get_empty_actors_dict(self, initial_value):
+        return {agent: initial_value for agent in self.agents}
 
     def _get_winner_for_current_turn(self) -> str:
         suit: str = self.current_turn_cards[0][1][0]
@@ -117,3 +173,12 @@ class TysiacGameEnv(ParallelEnv):
     @functools.lru_cache(maxsize=None)
     def action_space(self, agent):
         return spaces.Discrete(7)
+
+    def observe(self, agent):
+        """
+        Observe should return the observation of the specified agent. This function
+        should return a sane observation (though not necessarily the most up to date possible)
+        at any time after reset() is called.
+        """
+        # observation of one agent is the previous state of the other
+        return np.array(self.observations[agent])
