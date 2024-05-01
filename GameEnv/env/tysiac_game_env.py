@@ -8,6 +8,9 @@ from gymnasium import spaces
 from pettingzoo import AECEnv
 from pettingzoo.utils import agent_selector
 
+AGENT_MAX_CARDS = 8
+DECK_CARDS_COUNT = 24
+
 
 class Card(NamedTuple):
     value: str
@@ -44,7 +47,6 @@ class TysiacGameEnv(AECEnv):
     def __init__(self, render_mode=None):
         self.render_mode = render_mode
         super().__init__()
-        self.observations = None
         self.widow_cards: list[Card] = []
         self.a_cards: list[Card] = []
         self.b_cards: list[Card] = []
@@ -55,6 +57,8 @@ class TysiacGameEnv(AECEnv):
         self.laid_cards: list[Card] = []
         self.current_turn_cards: list[tuple[str, Card]] = []
         self.possible_agents = ["a", "b", "c"]
+        self.agents = self.possible_agents.copy()
+        self.observations: dict = self._get_empty_actors_dict({})
         self.last_turn = {}
         self._agent_selector = agent_selector(self.possible_agents)
 
@@ -89,7 +93,7 @@ class TysiacGameEnv(AECEnv):
         card_values = "ATKQJ9"
         card_suits = "♠♥♦♣"
         deck = []
-        picked_cards = [False for _ in range(24)]
+        picked_cards = [False for _ in range(DECK_CARDS_COUNT)]
 
         for card_suit in card_suits:
             for card_value in card_values:
@@ -103,6 +107,9 @@ class TysiacGameEnv(AECEnv):
                 picked_cards[random_card_index] = True
                 random_card = deck[random_card_index]
                 agent_cards.append(random_card)
+
+        for agent in self.agents:
+            self.infos[agent]["action_mask"] = self.compute_action_mask(agent)
 
         self.widow_cards = [deck[x] for x in picked_cards if x is False]
 
@@ -145,9 +152,7 @@ class TysiacGameEnv(AECEnv):
 
         self.agent_selection = self._agent_selector.next()
 
-        next_action_mask = np.zeros(7, dtype=np.int8)
-        for i in range(len(self.a_cards) - 1):
-            next_action_mask[i] = 1
+        next_action_mask = self.compute_action_mask(self.agent_selection)
 
         self._set_observations()
 
@@ -157,31 +162,55 @@ class TysiacGameEnv(AECEnv):
 
         return self.observations, self.rewards, self.terminations, self.truncations, self.infos
 
+    def compute_action_mask(self, agent):
+        next_action_mask = np.zeros(AGENT_MAX_CARDS, dtype=np.int8)
+        for i in range(len(self._get_agent_cards(agent)) - 1):
+            next_action_mask[i] = 1
+
+        return next_action_mask
+
     def _lay_card(self, agent, action):
-        agent_cards = self.a_cards
-        if agent == "b":
-            agent_cards = self.b_cards
-        elif agent == "c":
-            agent_cards = self.c_cards
+        agent_cards = self._get_agent_cards(agent)
 
         card = agent_cards.pop(action)
         self.laid_cards.append(card)
         self.current_turn_cards.append((agent, card))
 
+    def _get_agent_cards(self, agent):
+        agent_cards = self.a_cards
+        if agent == "b":
+            agent_cards = self.b_cards
+        elif agent == "c":
+            agent_cards = self.c_cards
+        return agent_cards
+
     def _set_observations(self):
         self.observations = self._get_empty_actors_dict({})
         self.observations["a"] = {
-            "a_cards": np.array([x.as_number() for x in self.a_cards], dtype=np.int8),
+            "my_cards": np.array([x.as_number() for x in self.a_cards], dtype=np.int8),
             "laid_cards": np.array([x.as_number() for x in self.laid_cards], dtype=np.int8)
         }
         self.observations["b"] = {
-            "b_cards": np.array([x.as_number() for x in self.b_cards], dtype=np.int8),
+            "my_cards": np.array([x.as_number() for x in self.b_cards], dtype=np.int8),
             "laid_cards": np.array([x.as_number() for x in self.laid_cards], dtype=np.int8)
         }
         self.observations["c"] = {
-            "c_cards": np.array([x.as_number() for x in self.c_cards], dtype=np.int8),
+            "my_cards": np.array([x.as_number() for x in self.c_cards], dtype=np.int8),
             "laid_cards": np.array([x.as_number() for x in self.laid_cards], dtype=np.int8)
         }
+
+    def get_observations_as_number_array(self, actor):
+        observations = np.zeros(AGENT_MAX_CARDS + DECK_CARDS_COUNT)
+
+        my_cards = self.observations[actor]["my_cards"]
+        for i in range(len(my_cards)):
+            observations[i] = my_cards[i]
+
+        laid_cards = self.observations[actor]["laid_cards"]
+        for i in range(len(laid_cards)):
+            observations[AGENT_MAX_CARDS + i] = laid_cards[i]
+
+        return observations
 
     def _get_empty_actors_dict(self, initial_value):
         return {agent: initial_value for agent in self.agents}
@@ -234,16 +263,16 @@ class TysiacGameEnv(AECEnv):
     def observation_space(self, agent):
         return spaces.Dict({
             f"my_cards": spaces.Sequence(
-                spaces.Discrete(24)
+                spaces.Discrete(AGENT_MAX_CARDS)
             ),
             "laid_cards": spaces.Sequence(
-                spaces.Discrete(24)
+                spaces.Discrete(DECK_CARDS_COUNT)
             )
         })
 
     @functools.lru_cache(maxsize=None)
     def action_space(self, agent):
-        return spaces.Discrete(7)
+        return spaces.Discrete(AGENT_MAX_CARDS)
 
     def observe(self, agent):
         """
