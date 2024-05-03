@@ -7,6 +7,7 @@ from rl.agents import DQNAgent
 from rl.memory import Memory, SequentialMemory
 from rl.policy import BoltzmannQPolicy
 
+import MultipleAgents.multiple_agents_learning
 from GameEnv.env.tysiac_game_env import TysiacGameEnv, AGENT_MAX_CARDS, DECK_CARDS_COUNT
 
 
@@ -79,27 +80,30 @@ def train():
 
     env.render()
 
-    for agent in env.agent_iter():
-        observation, reward, termination, truncation, info = env.last()
+    MultipleAgents.multiple_agents_learning.fit(agents, env=env, nb_steps=50000, visualize=False, verbose=1)
 
-        if termination or truncation:
-            action = None
-        else:
-            if "action_mask" in info:
-                mask = info["action_mask"]
-            else:
-                mask = np.ones(AGENT_MAX_CARDS)
-
-            actions = agents[agent].compute_q_values([env.get_observations_as_number_array(agent)])
-            action_mask = [float('-inf') if x == 0 else 0 for x in mask]
-            masked_actions = np.add(action_mask, actions)
-            action = np.argmax(masked_actions)
-
-            # action = env.action_space(agent).sample(mask)  # this is where you would insert your policy
-
-        observation, reward, termination, truncation, info = env.step(action)
-        if "turn_completed" in info and info["turn_completed"]:
-            env.render()
+    # for agent_id in env.agent_iter():
+    #     agent = agents[agent_id]
+    #     observation, reward, termination, truncation, info = env.last()
+    #
+    #     if termination or truncation:
+    #         action = None
+    #     else:
+    #         if "action_mask" in info:
+    #             mask = info["action_mask"]
+    #         else:
+    #             mask = np.ones(AGENT_MAX_CARDS)
+    #
+    #         actions = agents[agent_id].compute_q_values([env.get_observations_as_number_array(agent_id)])
+    #         action_mask = [float('-inf') if x == 0 else 0 for x in mask]
+    #         masked_actions = np.add(action_mask, actions)
+    #         action = np.argmax(masked_actions)
+    #
+    #         # action = env.action_space(agent).sample(mask)  # this is where you would insert your policy
+    #
+    #     observation, reward, termination, truncation, info = env.step(action)
+    #     if "turn_completed" in info and info["turn_completed"]:
+    #         env.render()
 
     env.close()
 

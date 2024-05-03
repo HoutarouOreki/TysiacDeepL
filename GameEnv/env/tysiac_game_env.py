@@ -150,13 +150,15 @@ class TysiacGameEnv(AECEnv):
         else:
             self.infos["turn_completed"] = False
 
-        self.agent_selection = self._agent_selector.next()
-
         next_action_mask = self.compute_action_mask(self.agent_selection)
+
+        self.agent_selection = self._agent_selector.next()
 
         self._set_observations()
 
-        self.terminations = self._get_empty_actors_dict(len(self.a_cards) == 0)
+        self.terminations = self._get_empty_actors_dict(False)
+        if len(self._get_agent_cards(agent)) == 0:
+            self.terminations[agent] = True
         self.truncations = self._get_empty_actors_dict(False)
         self.infos[agent]["action_mask"] = next_action_mask
 
@@ -164,7 +166,7 @@ class TysiacGameEnv(AECEnv):
 
     def compute_action_mask(self, agent):
         next_action_mask = np.zeros(AGENT_MAX_CARDS, dtype=np.int8)
-        for i in range(len(self._get_agent_cards(agent)) - 1):
+        for i in range(len(self._get_agent_cards(agent))):
             next_action_mask[i] = 1
 
         return next_action_mask
